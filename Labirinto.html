@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Gerência de Sistemas de Arquivos</title>
+
+<style>
+body {
+    margin: 0;
+    background: #0a0a0a;
+    color: white;
+    font-family: Arial;
+    text-align: center;
+}
+
+.tela {
+    display: none;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.ativa {
+    display: flex;
+}
+
+h1 {
+    font-size: 55px;
+    color: #00ffcc;
+    text-shadow: 0 0 20px #00ffcc;
+}
+
+button {
+    margin: 10px;
+    padding: 15px 30px;
+    font-size: 20px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    background: #00ffcc;
+    transition: 0.3s;
+}
+
+button:hover {
+    background: #00ccaa;
+    transform: scale(1.05);
+}
+
+canvas {
+    border: 2px solid #00ffcc;
+    box-shadow: 0 0 20px #00ffcc;
+    background: #111;
+}
+</style>
+</head>
+
+<body>
+
+<div id="menu" class="tela ativa">
+    <h1> GERENCIAMENTO DE SISTEMAS DE ARQUIVOS </h1>
+    <p>Simulação de controle de acesso, permissões e concorrência em sistemas operacionais</p>
+    <button onclick="abrirModo()"> INICIAR SIMULAÇÃO</button>
+</div>
+
+<div id="modo" class="tela">
+    <h2>Modo de execução do sistema</h2>
+    <button onclick="iniciarJogo(1)">1 Processo (Acesso sequencial)</button>
+    <button onclick="iniciarJogo(2)">2 Processos (Concorrência)</button>
+</div>
+
+<div id="jogo" class="tela">
+    <h3 id="info"></h3>
+    <canvas id="game" width="630" height="630"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const tileSize = 30;
+const size = 21;
+
+let modo = 1;
+let mapa;
+let player1, player2;
+
+let keyRed, keyBlue;
+let hasRed = false;
+let hasBlue = false;
+
+let particles = [];
+let flash = 0;
+
+let fase = 1;
+const totalFases = 3;
+
+// Controle de Teclado
+const teclasPressionadas = {};
+let lastMoveTime = 0;
+const moveDelay = 100; // Milissegundos entre movimentos (ajusta a velocidade)
+
+function trocarTela(id) {
+    document.querySelectorAll(".tela").forEach(t => t.classList.remove("ativa"));
+    document.getElementById(id).classList.add("ativa");
+}
+
+function abrirModo() {
+    trocarTela("modo");
+}
+
+function iniciarJogo(m) {
+    modo = m;
+    fase = 1;
+    trocarTela("jogo");
+    iniciarFase();
+}
+
+function gerarLabirinto() {
+    let grid = Array.from({length: size}, () => Array(size).fill(1));
+
+    function shuffle(arr) {
+        return arr.sort(() => Math.random() - 0.5);
+    }
+
+    function carve(x, y) {
+        let dirs = shuffle([[0,-2],[0,2],[-2,0],[2,0]]);
+        for (let [dx, dy] of dirs) {
+            let nx = x + dx;
+            let ny = y + dy;
+            if (nx > 0 && ny > 0 && nx < size-1 && ny < size-1 && grid[ny][nx] === 1) {
+                grid[ny][nx] = 0;
+                grid[y + dy/2][x + dx/2] = 0;
+                grid[ny][nx] = 0;
+                carve(nx, ny);
+            }
+        }
+    }
+
+    grid[1][1] = 0;
+    carve(1,1);
+    grid[size-2][size-2] = 2;
+    return grid;
+}
+
+function posicaoLivre() {
+    while (true) {
+        let x = Math.floor(Math.random() * size);
+        let y = Math.floor(Math.random() * size);
+        if (mapa[y][x] === 0 && !(x === 1 && y === 1)) {
+            return {x, y};
+        }
+    }
+}
+
+function iniciarFase() {
+    mapa = gerarLabirinto();
+    player1 = { x: 1, y: 1, trail: [] };
+    player2 = { x: 1, y: 1, trail: [] };
+
+    hasRed = false;
+    hasBlue = false;
+
+    keyRed = posicaoLivre();
+
+    if (modo === 2) {
+        do {
+            keyBlue = posicaoLivre();
+        } while (keyBlue.x === keyRed.x && keyBlue.y === keyRed.y);
+    } else {
+        keyBlue = null;
+    }
+
+    document.getElementById("info").innerText =
+        modo === 1
+        ? "Processo: obtenha permissão e localize o arquivo no diretório"
+        : "Processos concorrentes: cada um deve obter sua permissão de acesso";
+
+    document.getElementById("info").innerText += " | Nível do sistema: " + fase;
+}
+
+function criarParticulas(x, y, cor) {
+    for (let i = 0; i < 15; i++) {
+        particles.push({
+            x, y,
+            dx: (Math.random()-0.5)*3,
+            dy: (Math.random()-0.5)*3,
+            life: 30,
+            cor
+        });
+    }
+}
+
+function drawParticles() {
+    particles.forEach(p => {
+        ctx.fillStyle = p.cor;
+        ctx.fillRect(p.x, p.y, 3, 3);
+        p.x += p.dx;
+        p.y += p.dy;
+        p.life--;
+    });
+    particles = particles.filter(p => p.life > 0);
+}
+
+function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    let pulse = Math.sin(Date.now()*0.005)*0.5+0.5;
+
+    for (let y=0;y<size;y++){
+        for (let x=0;x<size;x++){
+            if (mapa[y][x]===1){
+                ctx.fillStyle="#555";
+                ctx.fillRect(x*tileSize,y*tileSize,tileSize,tileSize);
+            }
+            else if (mapa[y][x]===2){
+                ctx.fillStyle=`rgba(0,255,204,${0.3+pulse*0.4})`;
+                ctx.fillRect(x*tileSize,y*tileSize,tileSize,tileSize);
+            }
+        }
+    }
+
+    if (!hasRed){
+        let off=Math.sin(Date.now()*0.01)*3;
+        ctx.fillStyle="red";
+        ctx.beginPath();
+        ctx.arc(keyRed.x*tileSize+15,keyRed.y*tileSize+15+off,8,0,Math.PI*2);
+        ctx.fill();
+    }
+
+    if (keyBlue && !hasBlue){
+        let off=Math.sin(Date.now()*0.01)*3;
+        ctx.fillStyle="cyan";
+        ctx.beginPath();
+        ctx.arc(keyBlue.x*tileSize+15,keyBlue.y*tileSize+15+off,8,0,Math.PI*2);
+        ctx.fill();
+    }
+
+    function trail(p,cor){
+        p.trail.forEach((t,i)=>{
+            ctx.globalAlpha=i/p.trail.length;
+            ctx.fillStyle=cor;
+            ctx.fillRect(t.x*tileSize+10,t.y*tileSize+10,10,10);
+            ctx.globalAlpha=1;
+        });
+    }
+
+    trail(player1,"red");
+    if (modo===2) trail(player2,"cyan");
+
+    ctx.fillStyle="red";
+    ctx.beginPath();
+    ctx.arc(player1.x*tileSize+15,player1.y*tileSize+15,10,0,Math.PI*2);
+    ctx.fill();
+
+    if (modo===2){
+        ctx.fillStyle="cyan";
+        ctx.beginPath();
+        ctx.arc(player2.x*tileSize+15,player2.y*tileSize+15,10,0,Math.PI*2);
+        ctx.fill();
+    }
+
+    drawParticles();
+
+    if (flash>0){
+        ctx.fillStyle=`rgba(255,255,255,${flash})`;
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        flash-=0.02;
+    }
+}
+
+function mover(p,dx,dy,tipo){
+    let nx=p.x+dx;
+    let ny=p.y+dy;
+
+    if (nx >= 0 && nx < size && ny >= 0 && ny < size && mapa[ny][nx]!==1){
+        p.trail.push({x:p.x,y:p.y});
+        if (p.trail.length>10) p.trail.shift();
+        p.x=nx;
+        p.y=ny;
+    }
+
+    if (tipo==="red" && !hasRed && p.x===keyRed.x && p.y===keyRed.y){
+        hasRed=true;
+        criarParticulas(p.x*tileSize+15,p.y*tileSize+15,"red");
+    }
+
+    if (tipo==="blue" && keyBlue && !hasBlue && p.x===keyBlue.x && p.y===keyBlue.y){
+        hasBlue=true;
+        criarParticulas(p.x*tileSize+15,p.y*tileSize+15,"cyan");
+    }
+
+    if (mapa[ny] && mapa[ny][nx]===2){
+        verificarVitoria();
+    }
+}
+
+function verificarVitoria() {
+    const p1NoFim = player1.x === size - 2 && player1.y === size - 2;
+    const p2NoFim = modo === 2 ? (player2.x === size - 2 && player2.y === size - 2) : true;
+
+    if ((modo === 1 && hasRed && p1NoFim) || (modo === 2 && hasRed && hasBlue && p1NoFim && p2NoFim)) {
+        flash = 1;
+        // Pequena pausa para o jogador ver que chegou
+        setTimeout(() => {
+            if (fase < totalFases) {
+                fase++;
+                alert("Nível do sistema " + (fase - 1) + " concluído! Permissões válidas.");
+                iniciarFase();
+            } else {
+                alert(" PERMISSÕES VERIFICADAS\n ACESSO AO ARQUIVO CONCEDIDO");
+                fase = 1;
+                trocarTela("menu");
+            }
+        }, 100);
+    }
+}
+
+// Lógica de entradas contínuas
+document.addEventListener("keydown", (e) => {
+    teclasPressionadas[e.key] = true;
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) e.preventDefault();
+});
+
+document.addEventListener("keyup", (e) => {
+    teclasPressionadas[e.key] = false;
+});
+
+function processarInputs() {
+    const agora = Date.now();
+    if (agora - lastMoveTime > moveDelay) {
+        let moveu = false;
+
+        // Player 1
+        if (teclasPressionadas["w"]) { mover(player1, 0, -1, "red"); moveu = true; }
+        if (teclasPressionadas["s"]) { mover(player1, 0, 1, "red"); moveu = true; }
+        if (teclasPressionadas["a"]) { mover(player1, -1, 0, "red"); moveu = true; }
+        if (teclasPressionadas["d"]) { mover(player1, 1, 0, "red"); moveu = true; }
+
+        // Player 2
+        if (modo === 2) {
+            if (teclasPressionadas["ArrowUp"]) { mover(player2, 0, -1, "blue"); moveu = true; }
+            if (teclasPressionadas["ArrowDown"]) { mover(player2, 0, 1, "blue"); moveu = true; }
+            if (teclasPressionadas["ArrowLeft"]) { mover(player2, -1, 0, "blue"); moveu = true; }
+            if (teclasPressionadas["ArrowRight"]) { mover(player2, 1, 0, "blue"); moveu = true; }
+        }
+
+        if (moveu) lastMoveTime = agora;
+    }
+}
+
+function loop() {
+    processarInputs();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+iniciarFase();
+loop();
+</script>
+
+</body>
+</html>
